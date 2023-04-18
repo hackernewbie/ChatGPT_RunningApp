@@ -1,5 +1,8 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:math' show sin, cos, sqrt, atan2, pi;
+import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:location/location.dart';
 
 void main() => runApp(MyApp());
 
@@ -8,103 +11,154 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Running App',
-      home: StopwatchPage(),
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      home: MyHomePage(title: 'Running App'),
     );
   }
 }
 
-class StopwatchPage extends StatefulWidget {
+class MyHomePage extends StatefulWidget {
+  MyHomePage({Key? key, required this.title}) : super(key: key);
+  final String title;
+
   @override
-  _StopwatchPageState createState() => _StopwatchPageState();
+  _MyHomePageState createState() => _MyHomePageState();
 }
 
-class _StopwatchPageState extends State<StopwatchPage> {
-  Stopwatch _stopwatch = Stopwatch();
-  late Timer _timer;
-  Duration _duration = Duration();
+class _MyHomePageState extends State<MyHomePage> {
+  Completer<GoogleMapController> _controller = Completer();
+  Location _location = Location();
+  Set<Polyline> _polylines = {};
+  List<LatLng> _points = [];
+  Timer? _timer;
+  Duration _duration = Duration.zero;
 
-  void _startTimer() {
-    setState(() {
-      _stopwatch.start();
-      _timer = Timer.periodic(Duration(milliseconds: 100), _updateTimer);
+  static final CameraPosition _kInitialPosition = CameraPosition(
+    target: LatLng(37.42796133580664, -122.085749655962),
+    zoom: 16.0,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _location.onLocationChanged.listen((LocationData currentLocation) {
+      if (_points.isNotEmpty) {
+        LatLng previousPoint = _points.last;
+        LatLng currentPoint = LatLng(currentLocation.latitude!, currentLocation.longitude!);
+        if (_getDistanceBetweenPoints(previousPoint, currentPoint) > 10) {
+          _points.add(currentPoint);
+          _updatePolyline();
+        }
+      } else {
+        _points.add(LatLng(currentLocation.latitude!, currentLocation.longitude!));
+        _updatePolyline();
+      }
     });
   }
 
-  void _stopTimer() {
+  void _updatePolyline() {
+    Polyline polyline = Polyline(
+      polylineId: PolylineId('running_path'),
+      color: Colors.blue,
+      points: _points,
+    );
     setState(() {
-      _stopwatch.stop();
-      _timer.cancel();
+      _polylines.add(polyline);
     });
+  }
+
+  void _startTimer() {
+    if (_timer == null) {
+      _timer = Timer.periodic(Duration(seconds: 1), (Timer timer) {
+        setState(() {
+          _duration = _duration + Duration(seconds: 1);
+        });
+      });
+    }
+  }
+
+  void _stopTimer() {
+    if (_timer != null) {
+      _timer!.cancel();
+      _timer = null;
+    }
   }
 
   void _resetTimer() {
     setState(() {
-      _stopwatch.reset();
-      _duration = Duration();
+      _duration = Duration.zero;
+      _stopTimer();
+      _points.clear();
+      _polylines.clear();
     });
-  }
-
-  void _updateTimer(Timer timer) {
-    setState(() {
-      _duration = _stopwatch.elapsed;
-    });
-  }
-
-  String _formatDuration(Duration duration) {
-    String twoDigits(int n) {
-      if (n >= 10) return "$n";
-      return "0$n";
-    }
-
-    String twoDigitMinutes = twoDigits(duration.inMinutes.remainder(60));
-    String twoDigitSeconds = twoDigits(duration.inSeconds.remainder(60));
-    String twoDigitMilliseconds =
-        twoDigits(duration.inMilliseconds.remainder(100));
-    return "$twoDigitMinutes:$twoDigitSeconds.$twoDigitMilliseconds";
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Running App'),
+        title: Text(widget.title),
       ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            Text(
-              'Distance: 0 km',
-              style: TextStyle(fontSize: 20),
+      body: GoogleMap(
+        mapType: MapType.normal,
+        initialCameraPosition: _kInitialPosition,
+        onMapCreated: (GoogleMapController controller) {
+          _controller.complete(controller);
+        },
+        polylines: _polylines,
+      ),
+      floatingActionButton: Column(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          FloatingActionButton(
+            onPressed: () {
+              _startTimer();
+            },
+            child: Icon(Icons.play_arrow),
+          ),
+          SizedBox(height: 16.0),
+          FloatingActionButton(
+            onPressed: (){},
+            child: Icon(Icons.stop),
+            backgroundColor: Colors.red,
+          ),
+          SizedBox(height: 16.0),
+          FloatingActionButton(
+            onPressed: () {
+              _resetTimer();
+            },
+            child: Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      bottomNavigationBar: BottomAppBar(
+        child: Container(
+          height: 48.0,
+          child: Center(
+            child: Text(
+              '${_duration.inMinutes}:${(_duration.inSeconds % 60).toString().padLeft(2, '0')}',
+              style: TextStyle(fontSize: 24.0),
             ),
-            SizedBox(height: 20),
-            Text(
-              'Time: ${_formatDuration(_duration)}',
-              style: TextStyle(fontSize: 20),
-            ),
-            SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: <Widget>[
-                FloatingActionButton(
-                  onPressed: _startTimer,
-                  child: Icon(Icons.play_arrow),
-                ),
-                SizedBox(width: 20),
-                FloatingActionButton(
-                  onPressed: _stopTimer,
-                  child: Icon(Icons.stop),
-                ),
-                SizedBox(width: 20),
-                FloatingActionButton(
-                  onPressed: _resetTimer,
-                  child: Icon(Icons.replay),
-                ),
-              ],
-            ),
-          ],
+          ),
         ),
       ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
     );
+  }
+
+  double _getDistanceBetweenPoints(LatLng p1, LatLng p2) {
+    const double radius = 6371; // Earth's radius in km
+    double lat1 = p1.latitude * pi / 180;
+    double lon1 = p1.longitude * pi / 180;
+    double lat2 = p2.latitude * pi / 180;
+    double lon2 = p2.longitude * pi / 180;
+    double dLat = lat2 - lat1;
+    double dLon = lon2 - lon1;
+    double a = sin(dLat / 2) * sin(dLat / 2) + cos(lat1) * cos(lat2) * sin(dLon / 2) * sin(dLon / 2);
+    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    double distance = radius * c * 1000; // Convert to meters
+    return distance;
   }
 }
